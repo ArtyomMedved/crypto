@@ -1,0 +1,12 @@
+7233049532:AAGgroWUXMFoqq0VuqrVHVZU1NzecuLG0oY - tg bot
+App api_id: 26744762
+App api_hash: 71dfb38f90351d1b25ef1818ba86b905
+App title: fhref3ec3
+Short name: evednwcwb
+
+
+TELEGRAM_TOKEN = '7233049532:AAGgroWUXMFoqq0VuqrVHVZU1NzecuLG0oY'
+API_ID = '26744762'  # ID API, полученный от my.telegram.org
+API_HASH = '71dfb38f90351d1b25ef1818ba86b905'  # Хэш API, полученный от my.telegram.org
+SESSION_NAME = 'YOUR_SESSION_NAME'  # Имя вашей сессии
+TARGET_BOT_USERNAME = '@TRXEnergyMarket_bot'
