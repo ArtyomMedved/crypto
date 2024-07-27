@@ -9,7 +9,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from telegram import Update, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telethon import TelegramClient
 import time
 from tronpy import Tron
@@ -39,10 +39,17 @@ def init_db():
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_id INTEGER UNIQUE,
-        tron_address TEXT UNIQUE,
+        chat_id INTEGER UNIQUE
+    )
+    ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS user_addresses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        tron_address TEXT,
         energy_remaining TEXT,
-        free_bandwidth TEXT
+        free_bandwidth TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(id)
     )
     ''')
     conn.commit()
@@ -120,18 +127,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM users WHERE chat_id = ?', (chat_id,))
     user_data = cursor.fetchone()
-    conn.close()
 
     if user_data:
         await update.message.reply_text(
             'Вы уже зарегистрированы!\nВсе команды - /help'
         )
     else:
+        cursor.execute('INSERT INTO users (chat_id) VALUES (?)', (chat_id,))
+        conn.commit()
         await update.message.reply_text(
-            rf'Привет {user.mention_html()}! Пожалуйста, введите ваш адрес TRON.',
+            rf'Привет {user.mention_html()}! Пожалуйста, введите ваш первый адрес TRON.',
             parse_mode='HTML',
             reply_markup=ForceReply(selective=True),
         )
+    conn.close()
 
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     tron_address = update.message.text
@@ -139,35 +148,42 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM users WHERE tron_address = ?', (tron_address,))
-    address_data = cursor.fetchone()
+    cursor.execute('SELECT id FROM users WHERE chat_id = ?', (chat_id,))
+    user_id = cursor.fetchone()
 
-    if address_data:
-        keyboard = [[InlineKeyboardButton("Поддержка", url="https://t.me/usdt_il")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            'Ошибка ⚠️ - такой адрес уже привязан к другому аккаунту\n'
-            'Проверьте правильность введенного адреса или обратитесь в поддержку',
-            reply_markup=reply_markup
-        )
+    if user_id:
+        user_id = user_id[0]
+        cursor.execute('SELECT * FROM user_addresses WHERE tron_address = ?', (tron_address,))
+        address_data = cursor.fetchone()
 
-        await update.message.reply_text(
-            'Пожалуйста, введите ваш адрес TRON снова.',
-            reply_markup=ForceReply(selective=True)
-        )
+        if address_data:
+            keyboard = [[InlineKeyboardButton("Поддержка", url="https://t.me/usdt_il")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await update.message.reply_text(
+                'Ошибка ⚠️ - такой адрес уже привязан к другому аккаунту\n'
+                'Проверьте правильность введенного адреса или обратитесь в поддержку',
+                reply_markup=reply_markup
+            )
+
+            await update.message.reply_text(
+                'Пожалуйста, введите ваш адрес TRON снова.',
+                reply_markup=ForceReply(selective=True)
+            )
+        else:
+            _, _, energy_remaining = get_energy_usage(tron_address)
+            free_bandwidth = get_bandwidth_data(tron_address)
+
+            cursor.execute('INSERT INTO user_addresses (user_id, tron_address, energy_remaining, free_bandwidth) VALUES (?, ?, ?, ?)',
+                           (user_id, tron_address, energy_remaining, free_bandwidth))
+            conn.commit()
+
+            await update.message.reply_text(
+                f"Адрес добавлен успешно, ваш адрес - {tron_address}, Оставшаяся энергия: {energy_remaining}, Свободное количество Bandwidth: {free_bandwidth}"
+            )
     else:
-        _, _, energy_remaining = get_energy_usage(tron_address)
-        free_bandwidth = get_bandwidth_data(tron_address)
-
-        cursor.execute('INSERT INTO users (chat_id, tron_address, energy_remaining, free_bandwidth) VALUES (?, ?, ?, ?)', 
-                       (chat_id, tron_address, energy_remaining, free_bandwidth))
-        conn.commit()
-        conn.close()
-
-        await update.message.reply_text(
-            f"Регистрация прошла успешно, ваш адрес - {tron_address}, Оставшаяся энергия: {energy_remaining}, Свободное количество Bandwidth: {free_bandwidth}"
-        )
+        await update.message.reply_text('Вы не зарегистрированы. Пожалуйста, используйте команду /start для регистрации.')
+    conn.close()
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.args:
@@ -203,6 +219,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/stats <адрес> - Получить статистику для указанного адреса TRON\n"
         "/order <адрес> <количество> <срок в днях> - Отправить заказ\n"
         "/band <адрес> <количество> <срок в днях> - Арендовать Bandwidth для указанного адреса\n"
+        "/profile - Показать профиль пользователя\n"
         "/help - Показать это сообщение"
     )
     await update.message.reply_text(help_text)
@@ -468,6 +485,45 @@ async def band(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     finally:
         driver.quit()
 
+async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    chat_id = user.id
+
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id FROM users WHERE chat_id = ?', (chat_id,))
+    user_id = cursor.fetchone()
+
+    if user_id:
+        user_id = user_id[0]
+        cursor.execute('SELECT tron_address, energy_remaining, free_bandwidth FROM user_addresses WHERE user_id = ?', (user_id,))
+        addresses = cursor.fetchall()
+
+        if addresses:
+            profile_text = "Ваш профиль:\n"
+            for address in addresses:
+                tron_address, energy_remaining, free_bandwidth = address
+                profile_text += (
+                    f"Адрес TRON: {tron_address}\n"
+                    f"Оставшаяся энергия: {energy_remaining}\n"
+                    f"Свободное количество Bandwidth: {free_bandwidth}\n\n"
+                )
+            keyboard = [[InlineKeyboardButton("Добавить кошелек", callback_data='add_wallet')]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(profile_text, reply_markup=reply_markup)
+        else:
+            await update.message.reply_text('У вас нет добавленных адресов. Пожалуйста, используйте команду /start для добавления адреса.')
+    else:
+        await update.message.reply_text('Вы не зарегистрированы. Пожалуйста, используйте команду /start для регистрации.')
+    conn.close()
+
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == 'add_wallet':
+        await query.message.reply_text('Пожалуйста, введите новый адрес TRON.', reply_markup=ForceReply(selective=True))
+
 def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -478,10 +534,12 @@ def main():
     application.add_handler(CommandHandler("stats", stats))
     application.add_handler(CommandHandler("order", order))
     application.add_handler(CommandHandler("band", band))
-
+    application.add_handler(CommandHandler("profile", show_profile))
+    application.add_handler(CallbackQueryHandler(button))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, register))
 
     application.run_polling()
 
 if __name__ == "__main__":
     main()
+
