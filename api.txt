@@ -5,8 +5,17 @@ App title: fhref3ec3
 Short name: evednwcwb
 
 
+# Ваши токены и настройки
 TELEGRAM_TOKEN = '7233049532:AAGgroWUXMFoqq0VuqrVHVZU1NzecuLG0oY'
 API_ID = '26744762'  # ID API, полученный от my.telegram.org
 API_HASH = '71dfb38f90351d1b25ef1818ba86b905'  # Хэш API, полученный от my.telegram.org
 SESSION_NAME = 'YOUR_SESSION_NAME'  # Имя вашей сессии
 TARGET_BOT_USERNAME = '@TRXEnergyMarket_bot'
+
+# Путь к драйверу Chrome
+CHROMEDRIVER_PATH = '/usr/local/bin/chromedriver'
+
+USDT_PER_TRANSACTION = 29.8
+
+PRIVATE_KEY_TRONLIST = 471514b3bdbbf7d275e987933eb7bd1771b0ea09df05c8cd6c532c2bd0a31a1e
+API_TRONGRID = 9250cd97-47a4-42e8-a0c9-212ab222169c
