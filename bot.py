@@ -10,11 +10,14 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from telegram import Update, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import CommandHandler, CallbackQueryHandler
 from telethon import TelegramClient
 import time
 from tronpy import Tron
 from tronpy.keys import PrivateKey
 from tronpy.providers import HTTPProvider
+from threading import Thread
 
 # Ваши токены и настройки
 TELEGRAM_TOKEN = '7233049532:AAGgroWUXMFoqq0VuqrVHVZU1NzecuLG0oY'
@@ -39,7 +42,8 @@ def init_db():
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_id INTEGER UNIQUE
+        chat_id INTEGER UNIQUE,
+        admin INTEGER DEFAULT 0
     )
     ''')
     cursor.execute('''
@@ -54,6 +58,164 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
+
+# Функция для проверки, является ли пользователь администратором
+def is_admin(chat_id):
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT admin FROM users WHERE chat_id = ?', (chat_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result and result[0] == 1
+
+# Функция для получения списка пользователей
+def get_user_list():
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT chat_id FROM users')
+    users = cursor.fetchall()
+    conn.close()
+    return [user[0] for user in users]
+
+# Команда /apanel
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.message.chat_id
+    if is_admin(chat_id):
+        user_list = get_user_list()
+        buttons = [[InlineKeyboardButton(str(user_id), callback_data=f"user_{user_id}")] for user_id in user_list]
+        reply_markup = InlineKeyboardMarkup(buttons)
+        await update.message.reply_text("Список пользователей:", reply_markup=reply_markup)
+    else:
+        await update.message.reply_text("У вас нет прав для доступа к этой панели.")
+
+# Функция для получения статистики по адресам пользователя
+def get_user_addresses(chat_id):
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id FROM users WHERE chat_id = ?', (chat_id,))
+    user_id = cursor.fetchone()[0]
+    cursor.execute('SELECT tron_address, energy_remaining, free_bandwidth FROM user_addresses WHERE user_id = ?', (user_id,))
+    addresses = cursor.fetchall()
+    conn.close()
+    return addresses
+
+async def get_user_info(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> tuple[str, str]:
+    user = await context.bot.get_chat(user_id)
+    username = user.username if user.username else f"User {user_id}"
+    first_name = user.first_name
+    return username, first_name
+
+
+# Callback handler for buttons
+# Callback handler for buttons
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == 'add_wallet':
+        await query.message.reply_text('Пожалуйста, введите новый адрес TRON.', reply_markup=ForceReply(selective=True))
+    elif query.data == 'delete_wallet':
+        await query.message.reply_text('Пожалуйста, введите адрес TRON, который вы хотите удалить.', reply_markup=ForceReply(selective=True))
+    elif query.data.startswith('user_'):
+        try:
+            user_id = int(query.data.split("_")[1])
+            username, first_name = await get_user_info(user_id, context)
+            addresses = get_user_addresses(user_id)
+            now = datetime.now()
+            start_date = now - timedelta(days=30)
+            start_timestamp = int(start_date.timestamp() * 1000)
+            end_timestamp = int(now.timestamp() * 1000)
+
+            if addresses:
+                response = f"Пользователь <a href='tg://user?id={user_id}'>{first_name}</a>:\n\n"
+                for address, energy, bandwidth in addresses:
+                    transaction_count = get_transaction_count(address, start_timestamp, end_timestamp)
+                    response += (
+                        f"username: @{username}\n"
+                        f"ID: <code>{user_id}</code>\n"
+                        f"Адрес: <code>{address}</code>\n"
+                        f"Энергия: {energy}\n"
+                        f"Бесплатный bandwidth: {bandwidth}\n"
+                        f"Количество транзакций за текущий месяц: {transaction_count}\n"
+                        f"\n"
+                    )
+            else:
+                response = f"У пользователя {first_name} нет подключенных адресов."
+
+            await query.edit_message_text(text=response, parse_mode='HTML')
+        except ValueError as e:
+            print(f"Error parsing user_id: {e}")
+        except Exception as e:
+            print(f"Error retrieving user info: {e}")
+    else:
+        print(f"Unexpected callback data: {query.data}")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.message
+    chat_id = message.chat_id
+    tron_address = update.message.text
+    chat_id = update.message.chat_id
+
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id FROM users WHERE chat_id = ?', (chat_id,))
+    user_id = cursor.fetchone()
+
+    if message.reply_to_message:
+        if 'новый адрес TRON' in message.reply_to_message.text:
+            await register(update, context)
+        elif 'адрес TRON, который вы хотите удалить' in message.reply_to_message.text:
+            tron_address = message.text
+            conn = sqlite3.connect('users.db')
+            cursor = conn.cursor()
+            cursor.execute('SELECT id FROM users WHERE chat_id = ?', (chat_id,))
+            user_id = cursor.fetchone()
+            if user_id:
+                user_id = user_id[0]
+                cursor.execute('SELECT id FROM user_addresses WHERE tron_address = ? AND user_id = ?', (tron_address, user_id))
+                address_data = cursor.fetchone()
+                if address_data:
+                    cursor.execute('DELETE FROM user_addresses WHERE tron_address = ? AND user_id = ?', (tron_address, user_id))
+                    conn.commit()
+                    await message.reply_text(f'Кошелек {tron_address} был успешно удален.')
+                else:
+                    await message.reply_text('Ошибка: кошелек с таким адресом не найден!')
+            conn.close()
+
+    if user_id:
+        user_id = user_id[0]
+        cursor.execute('SELECT * FROM user_addresses WHERE tron_address = ?', (tron_address,))
+        address_data = cursor.fetchone()
+
+        if address_data:
+            keyboard = [[InlineKeyboardButton("Поддержка", url="https://t.me/usdt_il")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await update.message.reply_text(
+                'Ошибка ⚠️ - такой адрес уже привязан к другому аккаунту\n'
+                'Проверьте правильность введенного адреса или обратитесь в поддержку',
+                reply_markup=reply_markup
+            )
+
+            await update.message.reply_text(
+                'Пожалуйста, введите ваш адрес TRON снова.',
+                reply_markup=ForceReply(selective=True)
+            )
+        else:
+            _, _, energy_remaining = get_energy_usage(tron_address)
+            free_bandwidth = get_bandwidth_data(tron_address)
+
+            cursor.execute('INSERT INTO user_addresses (user_id, tron_address, energy_remaining, free_bandwidth) VALUES (?, ?, ?, ?)',
+                           (user_id, tron_address, energy_remaining, free_bandwidth))
+            conn.commit()
+
+            await update.message.reply_text(
+                f"Адрес добавлен успешно, ваш адрес - {tron_address}, Оставшаяся энергия: {energy_remaining}, Свободное количество Bandwidth: {free_bandwidth}"
+            )
+    else:
+        await update.message.reply_text('Вы не зарегистрированы. Пожалуйста, используйте команду /start для регистрации.')
+    conn.close()
+    
 
 def get_bandwidth_data(address):
     account_url = "https://apilist.tronscanapi.com/api/account"
@@ -82,10 +244,55 @@ def get_energy_usage(address):
         return energy_used, energy_limit, energy_remaining
     else:
         return 'Ошибка', 'Ошибка', 'Ошибка'
+    
+# Function to fetch all tron addresses from the database
+def fetch_tron_addresses():
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT tron_address FROM user_addresses')
+    addresses = cursor.fetchall()
+    conn.close()
+    return [address[0] for address in addresses]
+
+# Function to update the energy and bandwidth for all addresses
+def update_energy_bandwidth():
+    while True:
+        addresses = fetch_tron_addresses()
+        for address in addresses:
+            _, _, energy_remaining = get_energy_usage(address)
+            free_bandwidth = get_bandwidth_data(address)
+            
+            # Update the database
+            conn = sqlite3.connect('users.db')
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE user_addresses
+                SET energy_remaining = ?, free_bandwidth = ?
+                WHERE tron_address = ?
+            ''', (energy_remaining, free_bandwidth, address))
+            conn.commit()
+            conn.close()
+
+            # Print the updated values to the terminal
+            print(f"Кошелек: {address}")
+            print(f"Новое energy_remaining: {energy_remaining}")
+            print(f"Новое free_bandwidth: {free_bandwidth}")
+            print(f"")
+
+        # Sleep for 5 seconds before updating again
+        time.sleep(300)
+
+# Function to start the background thread
+def start_update_thread():
+    update_thread = Thread(target=update_energy_bandwidth)
+    update_thread.daemon = True
+    update_thread.start()
+
+# Start the update thread
+start_update_thread()
 
 def get_transaction_count(address, start_timestamp, end_timestamp):
     chrome_options = Options()
-    # chrome_options.add_argument("--headless")  # Запуск в фоновом режиме
     
     service = Service(CHROMEDRIVER_PATH)
     driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -485,6 +692,7 @@ async def band(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     finally:
         driver.quit()
 
+# Function to show the user's profile
 async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     chat_id = user.id
@@ -508,7 +716,10 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     f"Оставшаяся энергия: {energy_remaining}\n"
                     f"Свободное количество Bandwidth: {free_bandwidth}\n\n"
                 )
-            keyboard = [[InlineKeyboardButton("Добавить кошелек", callback_data='add_wallet')]]
+            keyboard = [
+                [InlineKeyboardButton("Добавить кошелек", callback_data='add_wallet')],
+                [InlineKeyboardButton("Удалить кошелек", callback_data='delete_wallet')]
+            ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(profile_text, reply_markup=reply_markup)
         else:
@@ -535,8 +746,9 @@ def main():
     application.add_handler(CommandHandler("order", order))
     application.add_handler(CommandHandler("band", band))
     application.add_handler(CommandHandler("profile", show_profile))
-    application.add_handler(CallbackQueryHandler(button))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, register))
+    application.add_handler(CommandHandler("apanel", admin_panel))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     application.run_polling()
 
