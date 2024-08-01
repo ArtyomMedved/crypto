@@ -55,10 +55,10 @@ try:
     
     time.sleep(1)
 
-    # Ввод значения 1500
+    # Ввод значения 1750
     amount_input = wait.until(EC.visibility_of_element_located((By.ID, "rent-resource-amount")))
     amount_input.clear()
-    amount_input.send_keys(bandwidth_value)
+    amount_input.send_keys("1750")
 
     time.sleep(1)
     
@@ -68,7 +68,7 @@ try:
 
     time.sleep(1)
     
-    one_day_option_xpath = "//ul[contains(@id, 'select-options')]//li[5]"
+    one_day_option_xpath = "//ul[contains(@id, 'select-options')]//li[34]"
     one_day_option = wait.until(EC.presence_of_element_located((By.XPATH, one_day_option_xpath)))
 
     try:
@@ -248,7 +248,7 @@ try:
     wallet_password_ok_button = wait.until(EC.element_to_be_clickable((By.ID, "wallet-password-ok")))
     wallet_password_ok_button.click()
 
-    time.sleep(1)
+    time.sleep(100)
 
 
 finally:
