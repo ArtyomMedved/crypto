@@ -21,9 +21,6 @@ from threading import Thread
 import pandas as pd
 import os
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-# Asynchronous functions
-from telegram.error import Conflict
 
 # Ваши токены и настройки
 TELEGRAM_TOKEN = '7233049532:AAGgroWUXMFoqq0VuqrVHVZU1NzecuLG0oY'
@@ -1261,6 +1258,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if query.data == 'add_wallet':
         await query.message.reply_text('Пожалуйста, введите новый адрес TRON.', reply_markup=ForceReply(selective=True))
 
+# --------------------------------------------------------------------------------------------------------------------------
+# exel function
+
 async def data_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.message.chat_id
     if not is_admin(chat_id):
@@ -1453,6 +1453,46 @@ def generate_excel_for_address(address, filename):
         transactions_data.append((tx_hash, energy, bandwidth, timestamp, recipient, amount, trx_consumed, fee_limit))
     
     update_excel(transactions_data, filename)
+
+# ---------------------------------------------------------------------------------------------------------------------------
+# Function to update the energy and bandwidth for all addresses
+def update_energy_bandwidth():
+    while True:
+        addresses = fetch_tron_addresses()
+        for address in addresses:
+            _, _, energy_remaining = get_energy_usage(address)
+            free_bandwidth = get_bandwidth_data(address)
+            
+            # Update the database
+            conn = sqlite3.connect('users.db')
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE user_addresses
+                SET energy_remaining = ?, free_bandwidth = ?
+                WHERE tron_address = ?
+            ''', (energy_remaining, free_bandwidth, address))
+            conn.commit()
+            conn.close()
+
+            # Print the updated values to the terminal
+            print(f"Кошелек: {address}")
+            print(f"Новое energy_remaining: {energy_remaining}")
+            print(f"Новое free_bandwidth: {free_bandwidth}")
+            print(f"")
+
+            # Sleep for 20 seconds before updating the next address
+            time.sleep(20)
+
+# Function to start the background thread
+def start_update_thread():
+    update_thread = Thread(target=update_energy_bandwidth)
+    update_thread.daemon = True
+    update_thread.start()
+
+# Start the update thread
+start_update_thread()
+
+# ---------------------------------------------------------------------------------------------------------------------------
 
 def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()

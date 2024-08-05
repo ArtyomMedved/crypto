@@ -13,6 +13,10 @@ from selenium.webdriver.support import expected_conditions as EC
 from tronpy import Tron
 from tronpy.keys import PrivateKey
 from tronpy.providers import HTTPProvider
+from telethon import TelegramClient, events
+from telethon.errors import RPCError, SessionPasswordNeededError
+import re
+
 
 # Telegram and API configuration
 API_ID = '26744762'
@@ -101,11 +105,27 @@ def fetch_tron_addresses():
 async def update_energy_user(address):
     try:
         async with TelegramClient(SESSION_NAME, API_ID, API_HASH) as client:
-            await client.send_message(
+            # Отправляем сообщение
+            message = await client.send_message(
                 TARGET_BOT_USERNAME,
                 f"/order {address} 60000 3"
             )
-        print(f"Авто-регистрация энергии успешно завершена для адреса: {address}")
+
+            # Определяем функцию для обработки ответного сообщения
+            @client.on(events.NewMessage(chats=TARGET_BOT_USERNAME, reply_to=message.id))
+            async def handler(event):
+                response = event.message.message
+                print(f"Ответ от бота для {address}: {response}")
+                
+                # Извлекаем сумму из ответа
+                match = re.search(r'OБЩАЯ СУММА ПЛАТЕЖА:\s*([0-9]+\.[0-9]+) TRX', response)
+                if match:
+                    amount_energy = float(match.group(1))
+                    print(f"Сумма платежа для {address}: {amount_energy} TRX")
+
+            # Убедитесь, что клиент продолжает работать, чтобы получить сообщение
+            await client.run_until_disconnected()
+
     except (RPCError, SessionPasswordNeededError) as e:
         print(f"Ошибка Telethon для {address}: {e}")
     except Exception as e:
@@ -347,7 +367,6 @@ async def update_band_user(address):
             print(f"Error closing the driver: {str(e)}")
 
 def update_energy_bandwidth():
-    while True:
         addresses = fetch_tron_addresses()
         for address in addresses:
             try:
@@ -359,33 +378,31 @@ def update_energy_bandwidth():
                 free_bandwidth = get_bandwidth_data(address)
                 print(f"Energy remaining: {energy_remaining}, Free bandwidth: {free_bandwidth}")
 
-                # Update the database
-                conn = sqlite3.connect('users.db')
-                cursor = conn.cursor()
-                cursor.execute('''
-                    UPDATE user_addresses
-                    SET energy_remaining = ?, free_bandwidth = ?
-                    WHERE tron_address = ?
-                ''', (energy_remaining, free_bandwidth, address))
-                conn.commit()
-                conn.close()
+                # # Update the database
+                # conn = sqlite3.connect('users.db')
+                # cursor = conn.cursor()
+                # cursor.execute('''
+                #     UPDATE user_addresses
+                #     SET energy_remaining = ?, free_bandwidth = ?
+                #     WHERE tron_address = ?
+                # ''', (energy_remaining, free_bandwidth, address))
+                # conn.commit()
+                # conn.close()
 
                 if energy_remaining != 'Не доступно' and int(energy_remaining) < 60000:
                     print(f"Low energy for {address}. Initiating energy registration.")
                     asyncio.run(update_energy_user(address))
 
-                time.sleep(20)
+                time.sleep(3)
 
                 if free_bandwidth != 'Не доступно' and int(free_bandwidth) < 400:
                     print(f"Low free bandwidth for {address}. Initiating bandwidth purchase.")
                     asyncio.run(update_band_user(address))
 
-                time.sleep(10)
+                time.sleep(5)
 
             except Exception as e:
                 print(f"Error updating data for {address}: {str(e)}")
-        print("Sleeping for 24 hours before the next check...")
-        time.sleep(86400)  # 24 hours in seconds
 
 # Start the update process
 update_energy_bandwidth()
