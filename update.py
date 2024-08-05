@@ -16,6 +16,9 @@ from tronpy.providers import HTTPProvider
 from telethon import TelegramClient, events
 from telethon.errors import RPCError, SessionPasswordNeededError
 import re
+from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
+from datetime import datetime
 
 # Telegram and API configuration
 API_ID = '26744762'
@@ -32,6 +35,8 @@ energy_buy = "60000"
 time_to_buy_energy = "3" # В днях
 band_buy = "1600"
 time_to_buy_band = "3" # 7 - столбик в выборе днях на сайте (3 дня)
+# Путь к файлу Excel
+EXCEL_FILE = 'rebuy_log.xlsx'
 
 def init_db():
     conn = sqlite3.connect('users.db')
@@ -71,6 +76,33 @@ def init_db():
 
 init_db()
 
+def init_excel():
+    """Initializes the Excel file if it doesn't exist."""
+    try:
+        # Попытка загрузить существующий файл
+        workbook = load_workbook(EXCEL_FILE)
+    except FileNotFoundError:
+        # Создание нового файла и листа
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = 'Transactions'
+        headers = ['Адрес', 'Дата', 'Тип', 'Количество', 'Количество дней', 'Стоимость']
+        sheet.append(headers)
+        workbook.save(EXCEL_FILE)
+        print(f"Файл {EXCEL_FILE} создан.")
+    except Exception as e:
+        print(f"Ошибка при создании или загрузке файла Excel: {e}")
+
+# Инициализация Excel-файла
+init_excel()
+
+def append_to_excel(data):
+    """Appends a row of data to the Excel file."""
+    workbook = load_workbook(EXCEL_FILE)
+    sheet = workbook.active
+    sheet.append(data)
+    workbook.save(EXCEL_FILE)
+
 def get_bandwidth_data(address):
     account_url = "https://apilist.tronscanapi.com/api/account"
     params = {'address': address}
@@ -108,6 +140,7 @@ def fetch_tron_addresses():
     return [address[0] for address in addresses]
 
 async def update_energy_user(address):
+    amount_energy = 0
     try:
         async with TelegramClient(SESSION_NAME, API_ID, API_HASH) as client:
             # Отправляем сообщение
@@ -119,6 +152,7 @@ async def update_energy_user(address):
             # Определяем функцию для обработки ответного сообщения
             @client.on(events.NewMessage(chats=TARGET_BOT_USERNAME, reply_to=message.id))
             async def handler(event):
+                nonlocal amount_energy
                 response = event.message.message
                 print(f"Ответ от бота для {address}: {response}")
                 
@@ -135,6 +169,10 @@ async def update_energy_user(address):
         print(f"Ошибка Telethon для {address}: {e}")
     except Exception as e:
         print(f"Ошибка при авто-регистрации энергии для адреса {address}: {str(e)}")
+    finally:
+        if amount_energy:
+            now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            append_to_excel([address, now, 'energy', energy_buy, time_to_buy_energy, amount_energy])
 
 async def update_band_user(address):
     print(f"Starting bandwidth purchase for address: {address}")
@@ -360,16 +398,14 @@ async def update_band_user(address):
         time.sleep(40)    
 
         # Дополнительная задержка для надежности
-        time.sleep(1)
-
-        print(f"Bandwidth purchase completed successfully for address: {address}")
+        time.sleep(2)
     except Exception as e:
-        print(f"Error in bandwidth purchase for address {address}: {str(e)}")
+        print(f"Ошибка при выполнении Selenium для {address}: {str(e)}")
     finally:
-        try:
-            driver.quit()
-        except Exception as e:
-            print(f"Error closing the driver: {str(e)}")
+        driver.quit()
+        if amount:
+            now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            append_to_excel([address, now, 'bandwidth', band_buy, time_to_buy_band, price])
 
 def update_energy_bandwidth():
         addresses = fetch_tron_addresses()
@@ -382,17 +418,6 @@ def update_energy_bandwidth():
                 
                 free_bandwidth = get_bandwidth_data(address)
                 print(f"Energy remaining: {energy_remaining}, Free bandwidth: {free_bandwidth}")
-
-                # # Update the database
-                # conn = sqlite3.connect('users.db')
-                # cursor = conn.cursor()
-                # cursor.execute('''
-                #     UPDATE user_addresses
-                #     SET energy_remaining = ?, free_bandwidth = ?
-                #     WHERE tron_address = ?
-                # ''', (energy_remaining, free_bandwidth, address))
-                # conn.commit()
-                # conn.close()
 
                 if energy_remaining != 'Не доступно' and int(energy_remaining) < 60000:
                     print(f"Low energy for {address}. Initiating energy registration.")

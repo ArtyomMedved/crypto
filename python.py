@@ -1480,8 +1480,8 @@ def update_energy_bandwidth():
             print(f"Новое free_bandwidth: {free_bandwidth}")
             print(f"")
 
-            # Sleep for 20 seconds before updating the next address
-            time.sleep(20)
+            # Sleep for 10 seconds before updating the next address
+            time.sleep(10)
 
 # Function to start the background thread
 def start_update_thread():
