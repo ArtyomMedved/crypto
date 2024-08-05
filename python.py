@@ -1261,7 +1261,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if query.data == 'add_wallet':
         await query.message.reply_text('Пожалуйста, введите новый адрес TRON.', reply_markup=ForceReply(selective=True))
 
-# Команда /data
 async def data_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.message.chat_id
     if not is_admin(chat_id):
@@ -1270,18 +1269,30 @@ async def data_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     else:
         await update.message.reply_text("Ожидайте, идет обработка данных кошельков")
         
-    
     addresses = fetch_tron_addresses()
+    all_data = []
+
     for address in addresses:
         filename = f"{address}.xlsx"
         generate_excel_for_address(address, filename)
         if os.path.exists(filename):
             try:
                 await context.bot.send_document(chat_id, document=open(filename, 'rb'))
+                df = pd.read_excel(filename)
+                all_data.append(df)
             except Exception as e:
                 await update.message.reply_text(f"Ошибка при отправке файла {filename}: {str(e)}")
         else:
             await update.message.reply_text(f"Файл {filename} не был создан")
+    
+    if all_data:
+        combined_df = pd.concat(all_data, ignore_index=True)
+        combined_filename = "combined_transactions.xlsx"
+        combined_df.to_excel(combined_filename, index=False)
+        try:
+            await context.bot.send_document(chat_id, document=open(combined_filename, 'rb'))
+        except Exception as e:
+            await update.message.reply_text(f"Ошибка при отправке общего файла {combined_filename}: {str(e)}")
 
 def fetch_tron_addresses():
     conn = sqlite3.connect('users.db')

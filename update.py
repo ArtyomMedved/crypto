@@ -332,7 +332,7 @@ async def update_band_user(address):
         wallet_password_ok_button = wait.until(EC.element_to_be_clickable((By.ID, "wallet-password-ok")))
         wallet_password_ok_button.click()
 
-        time.sleep(100)    
+        time.sleep(40)    
 
         # Дополнительная задержка для надежности
         time.sleep(1)
