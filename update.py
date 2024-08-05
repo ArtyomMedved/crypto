@@ -17,7 +17,6 @@ from telethon import TelegramClient, events
 from telethon.errors import RPCError, SessionPasswordNeededError
 import re
 
-
 # Telegram and API configuration
 API_ID = '26744762'
 API_HASH = '71dfb38f90351d1b25ef1818ba86b905'
@@ -27,6 +26,12 @@ CHROMEDRIVER_PATH = '/usr/local/bin/chromedriver'
 pass_word = "MedvedevArtyom08"
 api_key = "9250cd97-47a4-42e8-a0c9-212ab222169c"
 private_key_hex = "471514b3bdbbf7d275e987933eb7bd1771b0ea09df05c8cd6c532c2bd0a31a1e"
+
+# Количество и даты для rebuy
+energy_buy = "60000"
+time_to_buy_energy = "3" # В днях
+band_buy = "1600"
+time_to_buy_band = "3" # 7 - столбик в выборе днях на сайте (3 дня)
 
 def init_db():
     conn = sqlite3.connect('users.db')
@@ -108,7 +113,7 @@ async def update_energy_user(address):
             # Отправляем сообщение
             message = await client.send_message(
                 TARGET_BOT_USERNAME,
-                f"/order {address} 60000 3"
+                f"/order {address} {energy_buy} {time_to_buy_energy}"
             )
 
             # Определяем функцию для обработки ответного сообщения
@@ -120,7 +125,7 @@ async def update_energy_user(address):
                 # Извлекаем сумму из ответа
                 match = re.search(r'OБЩАЯ СУММА ПЛАТЕЖА:\s*([0-9]+\.[0-9]+) TRX', response)
                 if match:
-                    amount_energy = float(match.group(1))
+                    amount_energy = float(match.group(1)) # сумма покупки energy
                     print(f"Сумма платежа для {address}: {amount_energy} TRX")
 
             # Убедитесь, что клиент продолжает работать, чтобы получить сообщение
@@ -165,10 +170,10 @@ async def update_band_user(address):
     
         time.sleep(1)
 
-        # Ввод значения 1600
+        # Ввод значения из band_buy
         amount_input = wait.until(EC.visibility_of_element_located((By.ID, "rent-resource-amount")))
         amount_input.clear()
-        amount_input.send_keys(1600)
+        amount_input.send_keys(band_buy)
 
         time.sleep(1)
 
@@ -258,7 +263,7 @@ async def update_band_user(address):
         to_addr = address_value  # Используйте значение, полученное из Selenium
 
         # Укажите сумму перевода в TRX (1 TRX = 1_000_000 Sun)
-        amount = int(float(price) * 1_000_000)  # Перевод суммы в TRX
+        amount = int(float(price) * 1_000_000)  # Перевод суммы в TRX 
 
         # Создание транзакции
         txn = (
@@ -302,10 +307,10 @@ async def update_band_user(address):
 
         time.sleep(1)
 
-        # Ввод значения 1600
+        # Ввод значения из band_buy
         amount_input = wait.until(EC.visibility_of_element_located((By.ID, "rent-resource-amount")))
         amount_input.clear()
-        amount_input.send_keys(1600)
+        amount_input.send_keys(band_buy)
 
         time.sleep(1)
 
