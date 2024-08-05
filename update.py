@@ -408,6 +408,7 @@ async def update_band_user(address):
             append_to_excel([address, now, 'bandwidth', band_buy, time_to_buy_band, price])
 
 def update_energy_bandwidth():
+    while True:  # Бесконечный цикл для повторения процесса
         addresses = fetch_tron_addresses()
         for address in addresses:
             try:
@@ -434,5 +435,8 @@ def update_energy_bandwidth():
             except Exception as e:
                 print(f"Error updating data for {address}: {str(e)}")
 
-# Start the update process
+        print("Waiting for 30 minutes before next check...")
+        time.sleep(30 * 60)  # Задержка на 30 минут (30 * 60 секунд)
+
+# Start the periodic update process
 update_energy_bandwidth()
