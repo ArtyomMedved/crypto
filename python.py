@@ -1300,8 +1300,8 @@ def generate_excel_for_address(address, filename):
     
     transactions_data = []
     for tx_hash in usdt_transactions:
-        energy, bandwidth, timestamp, recipient, amount, trx_consumed = get_transaction_details(tx_hash)
-        transactions_data.append((tx_hash, energy, bandwidth, timestamp, recipient, amount, trx_consumed))
+        energy, bandwidth, timestamp, recipient, amount, trx_consumed, fee_limit = get_transaction_details(tx_hash)
+        transactions_data.append((tx_hash, energy, bandwidth, timestamp, recipient, amount, trx_consumed, fee_limit))
     
     update_excel(transactions_data, filename)
 
@@ -1316,6 +1316,9 @@ def get_transaction_details(tx_id):
     energy_fee = data.get('cost', {}).get('energy_fee', 0)
     net_fee = data.get('cost', {}).get('net_fee', 0)
     trx_consumed = (energy_fee + net_fee) / 1_000_000  # Convert from SUN to TRX
+
+    fee_limit_sun = data.get('fee_limit', 0)
+    fee_limit = fee_limit_sun / 1_000_000
     
     trc20_info = data.get('trc20TransferInfo', [])
     if trc20_info:
@@ -1328,7 +1331,7 @@ def get_transaction_details(tx_id):
     
     timestamp = datetime.fromtimestamp(data.get('timestamp', 0) / 1000)
     
-    return energy_used, bandwidth_used, timestamp, recipient, amount, trx_consumed
+    return energy_used, bandwidth_used, timestamp, recipient, amount, trx_consumed, fee_limit
 
 def get_start_and_end_of_month():
     today = datetime.today()
@@ -1389,27 +1392,32 @@ def update_excel(transactions_data, filename="transactions.xlsx"):
     if file_exists:
         df = pd.read_excel(filename)
     else:
-        df = pd.DataFrame(columns=["Txn Hash", "Amount (USDT)", "Recipient", "Timestamp", "Energy Used", "Bandwidth Used", "TRX Consumed", "Total Transaction Cost"])
+        df = pd.DataFrame(columns=["Txn Hash", "Amount (USDT)", "Recipient", "Timestamp", "Energy Used", "Bandwidth Used", "TRX Consumed", "Total Transaction Cost", "Fee Limit", "For Payment"])
     
     existing_hashes = set(df["Txn Hash"])
     
     new_data = []
-    for tx_hash, energy, bandwidth, timestamp, recipient, amount, trx_consumed in transactions_data:
+    for tx_hash, energy, bandwidth, timestamp, recipient, amount, trx_consumed, fee_limit in transactions_data:
         if tx_hash not in existing_hashes:
             total_cost = calculate_transaction_cost(energy, bandwidth)
-            new_data.append([tx_hash, amount, recipient, timestamp, energy, bandwidth, trx_consumed, total_cost])
+            if fee_limit >= total_cost:
+                for_payment = (total_cost - trx_consumed) / 2
+            else:
+                for_payment = (fee_limit - trx_consumed) / 2
+            new_data.append([tx_hash, amount, recipient, timestamp, energy, bandwidth, trx_consumed, total_cost, fee_limit, for_payment])
     
     if new_data:
-        new_df = pd.DataFrame(new_data, columns=["Txn Hash", "Amount (USDT)", "Recipient", "Timestamp", "Energy Used", "Bandwidth Used", "TRX Consumed", "Total Transaction Cost"])
+        new_df = pd.DataFrame(new_data, columns=["Txn Hash", "Amount (USDT)", "Recipient", "Timestamp", "Energy Used", "Bandwidth Used", "TRX Consumed", "Total Transaction Cost", "Fee Limit", "For Payment"])
         df = pd.concat([df, new_df], ignore_index=True)
         
         total_energy = df["Energy Used"].sum()
         total_bandwidth = df["Bandwidth Used"].sum()
         total_trx_consumed = df["TRX Consumed"].sum()
         total_cost = df["Total Transaction Cost"].sum()
+        fee_limit = df["Fee Limit"].sum()
         
-        totals_df = pd.DataFrame([["Total", None, None, None, total_energy, total_bandwidth, total_trx_consumed, total_cost]], 
-                                 columns=["Txn Hash", "Amount (USDT)", "Recipient", "Timestamp", "Energy Used", "Bandwidth Used", "TRX Consumed", "Total Transaction Cost"])
+        totals_df = pd.DataFrame([["Total", None, None, None, total_energy, total_bandwidth, total_trx_consumed, total_cost, fee_limit, None]], 
+                                 columns=["Txn Hash", "Amount (USDT)", "Recipient", "Timestamp", "Energy Used", "Bandwidth Used", "TRX Consumed", "Total Transaction Cost", "Fee Limit", "For Payment"])
         df = pd.concat([df, totals_df], ignore_index=True)
         
         df.to_excel(filename, index=False)
@@ -1430,8 +1438,8 @@ def generate_excel_for_address(address, filename):
     
     transactions_data = []
     for tx_hash in usdt_transactions:
-        energy, bandwidth, timestamp, recipient, amount, trx_consumed = get_transaction_details(tx_hash)
-        transactions_data.append((tx_hash, energy, bandwidth, timestamp, recipient, amount, trx_consumed))
+        energy, bandwidth, timestamp, recipient, amount, trx_consumed, fee_limit = get_transaction_details(tx_hash)
+        transactions_data.append((tx_hash, energy, bandwidth, timestamp, recipient, amount, trx_consumed, fee_limit))
     
     update_excel(transactions_data, filename)
 
