@@ -21,9 +21,13 @@ from threading import Thread
 import pandas as pd
 import os
 import asyncio
+import secrets
+from telegram.ext import Updater, CommandHandler, CallbackContext
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
 
 # Ваши токены и настройки
-TELEGRAM_TOKEN = '7233049532:AAGgroWUXMFoqq0VuqrVHVZU1NzecuLG0oY'
+TELEGRAM_TOKEN = '7283223352:AAGAhHAVwogRTD1U42_-OsHVpfc8gOONL48'
 API_ID = '26744762'  # ID API, полученный от my.telegram.org
 API_HASH = '71dfb38f90351d1b25ef1818ba86b905' # Хэш API, полученный от my.telegram.org
 SESSION_NAME = 'YOUR_SESSION_NAME'  # Имя вашей сессии
@@ -35,29 +39,53 @@ pass_word = "MedvedevArtyom08" # пароль для врмененного ак
 api_key = "9250cd97-47a4-42e8-a0c9-212ab222169c"  # api key from TRONGRID
 # Введите свой приватный ключ
 private_key_hex = "471514b3bdbbf7d275e987933eb7bd1771b0ea09df05c8cd6c532c2bd0a31a1e"  # from tronlik
+BASE_URL = "https://t.me/"
+BOT_USERNAME = "freeTRC_Bot"
 
 def init_db():
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
-    
+
+    # Проверяем и добавляем столбец 'approved', если его нет
     cursor.execute("PRAGMA table_info(users)")
     columns = [column[1] for column in cursor.fetchall()]
-    
     if 'approved' not in columns:
         cursor.execute('''
         ALTER TABLE users ADD COLUMN approved INTEGER DEFAULT 0
         ''')
-    
+
+    # Проверяем и добавляем столбец 'ref_url', если его нет
+    if 'ref_url' not in columns:
+        cursor.execute('''
+        ALTER TABLE users ADD COLUMN ref_url TEXT
+        ''')
+
+    # Проверяем и добавляем столбец 'coment', если его нет
+    if 'coment' not in columns:
+        cursor.execute('''
+        ALTER TABLE users ADD COLUMN coment TEXT
+        ''')
+
+    # Проверяем и добавляем столбец 'language', если его нет
+    if 'language' not in columns:
+        cursor.execute('''
+        ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'en'
+        ''')
+
+    # Создание таблицы, если она не существует
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         chat_id INTEGER UNIQUE,
         admin INTEGER DEFAULT 0,
         date_added TEXT,
-        approved INTEGER DEFAULT 0
+        approved INTEGER DEFAULT 0,
+        ref_url TEXT,
+        coment TEXT,
+        language TEXT DEFAULT 'en'
     )
     ''')
-    
+
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS user_addresses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,11 +96,35 @@ def init_db():
         FOREIGN KEY (user_id) REFERENCES users(id)
     )
     ''')
-    
+
     conn.commit()
     conn.close()
 
 init_db()
+
+# Function to generate a referral link
+def generate_referral_link(user_id: int) -> str:
+    referral_token = secrets.token_urlsafe(16)  # Generate a secure token
+    return f"{BASE_URL}{BOT_USERNAME}?start={user_id}_{referral_token}"
+
+# Handler for the /ref command
+async def ref_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    referral_link = generate_referral_link(user_id)
+
+    # Сохранение реферальной ссылки в базе данных
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+    UPDATE users
+    SET ref_url = ?
+    WHERE chat_id = ?
+    ''', (referral_link, user_id))
+    conn.commit()
+    conn.close()
+
+    # Отправка сообщения с реферальной ссылкой
+    await update.message.reply_text(f"Ваша реферальная ссылка: {referral_link}")
 
 def get_new_users():
     conn = sqlite3.connect('users.db')
@@ -107,9 +159,9 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         user_list = get_user_list()
         buttons = [[InlineKeyboardButton(str(user_id), callback_data=f"user_{user_id}")] for user_id in user_list]
         reply_markup = InlineKeyboardMarkup(buttons)
-        await update.message.reply_text("Список пользователей:", reply_markup=reply_markup)
+        await update.message.reply_text("List of users:", reply_markup=reply_markup)
     else:
-        await update.message.reply_text("У вас нет прав для доступа к этой панели.")
+        await update.message.reply_text("You do not have permission to access this panel.")
 
 # Вспомогательные функции
 async def auto_energy_reg(update: Update, address: str):
@@ -122,7 +174,7 @@ async def auto_energy_reg(update: Update, address: str):
             )
         print(f"auto_energy_reg completed successfully for address: {address}")
         await update.message.reply_text(
-            f"Энергия успешно зарегистрирована для адреса {address}."
+            f"Energy has been successfully registered for the address {address}."
         )
     except Exception as e:
         print(f"Error in auto_energy_reg for address {address}: {str(e)}")
@@ -362,10 +414,10 @@ async def auto_band_reg(update: Update, address: str):
 
         # Подтверждение аренды
         await update.message.reply_text(
-            f"Вы успешно арендовали Bandwidth для адреса {address} на срок 30 дней."
+            f"You have successfully rented Bandwidth for the {address} address for a period of 30 days."
         )
     except Exception as e:
-        await update.message.reply_text(f"Произошла ошибка при аренде Bandwidth: {str(e)}")
+        await update.message.reply_text(f"An error occurred when renting Bandwidth: {str(e)}")
     finally:
         try:
             driver.quit()
@@ -382,7 +434,7 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             new_user_id = int(user_id_str)
         except ValueError:
-            await update.message.reply_text('Ошибка: ID пользователя должен быть числом.')
+            await update.message.reply_text('Error: The user ID must be a number.')
             return
 
         if is_admin(chat_id):
@@ -399,7 +451,7 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 conn.commit()
                 cursor.execute('INSERT INTO user_addresses (user_id, tron_address) VALUES (?, ?)', (user_id, tron_address))
                 conn.commit()
-                await update.message.reply_text(f'Пользователь с ID {new_user_id} успешно добавлен с адресом {tron_address}.')
+                await update.message.reply_text(f'User with ID {new_user_id} successfully added with address {tron_address}.')
             else:
                 user_id = user_record[0]
                 cursor.execute('SELECT id FROM user_addresses WHERE user_id = ?', (user_id,))
@@ -407,9 +459,9 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 if address_record is None:
                     cursor.execute('INSERT INTO user_addresses (user_id, tron_address) VALUES (?, ?)', (user_id, tron_address))
                     conn.commit()
-                    await update.message.reply_text(f'Адрес {tron_address} успешно добавлен для пользователя с ID {new_user_id}.')
+                    await update.message.reply_text(f'The address {tron_address} was successfully added for the user with the ID {new_user_id}.')
                 else:
-                    await update.message.reply_text(f'Адрес для пользователя с ID {new_user_id} уже существует.')
+                    await update.message.reply_text(f'The address for the user with the ID {new_user_id} already exists.')
 
             conn.close()
 
@@ -449,7 +501,7 @@ async def get_user_info(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> tup
     if result:
         date_added = result[0]
     else:
-        date_added = 'Дата не установлена'
+        date_added = 'No date has been set'
 
     return username, first_name, date_added
 
@@ -471,10 +523,10 @@ async def button_handler1(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         conn.close()
         await context.bot.send_message(
             chat_id=user_id,
-            text='Ваша заявка на регистрацию одобрена. Пожалуйста, введите ваш первый адрес TRON.',
+            text='Your registration application has been approved. Please enter your first TRON address.',
             reply_markup=ForceReply(selective=True)
         )
-        await query.edit_message_text(text=f"Пользователь с ID {user_id} одобрен.")
+        await query.edit_message_text(text=f"The user with the ID {user_id} is approved.")
     elif query.data.startswith('reject_'):
         user_id = int(query.data.split('_')[1])
         conn = sqlite3.connect('users.db')
@@ -484,9 +536,9 @@ async def button_handler1(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         conn.close()
         await context.bot.send_message(
             chat_id=user_id,
-            text='Ваша заявка на регистрацию отклонена.'
+            text='Your application for registration has been rejected.'
         )
-        await query.edit_message_text(text=f"Пользователь с ID {user_id} отклонен.")
+        await query.edit_message_text(text=f"The user with the ID {user_id} has been rejected.")
     else:
         print(f"Unexpected callback data: {query.data}")
 
@@ -496,9 +548,9 @@ async def button_handler2(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
 
     if query.data == 'add_wallet':
-        await query.message.reply_text('Пожалуйста, введите новый адрес TRON.', reply_markup=ForceReply(selective=True))
+        await query.message.reply_text('Please enter the new TRON address.', reply_markup=ForceReply(selective=True))
     elif query.data == 'delete_wallet':
-        await query.message.reply_text('Пожалуйста, введите адрес TRON, который вы хотите удалить.', reply_markup=ForceReply(selective=True))
+        await query.message.reply_text('Please enter the TRON address that you want to delete.', reply_markup=ForceReply(selective=True))
     elif query.data.startswith('user_'):
         try:
             user_id = int(query.data.split("_")[1])
@@ -522,21 +574,21 @@ async def button_handler2(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             end_timestamp = int(now.timestamp() * 1000)
 
             if addresses:
-                response = f"Пользователь <a href='tg://user?id={user_id}'>{first_name}</a>:\n\n"
+                response = f"User: <a href='tg://user?id={user_id}'>{first_name}</a>:\n\n"
                 for address, energy, bandwidth in addresses:
                     transaction_count = get_transaction_count(address, start_timestamp, end_timestamp)
                     response += (
                         f"username: @{username}\n"
                         f"ID: <code>{user_id}</code>\n"
-                        f"Адрес: <code>{address}</code>\n"
-                        f"Энергия: {energy}\n"
-                        f"Бесплатный bandwidth: {bandwidth}\n"
-                        f"Количество транзакций за текущий месяц: {transaction_count}\n"
-                        f"Дата добавления: {date_added.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"Оставшееся время подписки: {remaining_days} дней\n\n"
+                        f"Address: <code>{address}</code>\n"
+                        f"Energy: {energy}\n"
+                        f"Free bandwidth: {bandwidth}\n"
+                        f"The number of transactions for the current month: {transaction_count}\n"
+                        f"Date of addition: {date_added.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"Remaining subscription time: {remaining_days} дней\n\n"
                     )
             else:
-                response = f"У пользователя {first_name} нет подключенных адресов.\n\nДата добавления: {date_added.strftime('%Y-%m-%d %H:%M:%S')}\nОставшееся время подписки: {remaining_days} дней"
+                response = f"The user {first_name} has no connected addresses.\n\nDate of addition: {date_added.strftime('%Y-%m-%d %H:%M:%S')}\nRemaining subscription time: {remaining_days} days"
 
             await query.edit_message_text(text=response, parse_mode='HTML')
         except ValueError as e:
@@ -574,18 +626,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 if address_data:
                     if address_data[1] == user_id:
                         await message.reply_text(
-                            'Ошибка ⚠️ - такой адрес уже привязан к вашему аккаунту.'
+                            'Error ⚠️ - this address is already linked to your account.'
                         )
                     else:
                         keyboard = [[InlineKeyboardButton("Поддержка", url="https://t.me/usdt_il")]]
                         reply_markup = InlineKeyboardMarkup(keyboard)
                         await message.reply_text(
-                            'Ошибка ⚠️ - такой адрес уже привязан к другому аккаунту\n'
-                            'Проверьте правильность введенного адреса или обратитесь в поддержку',
+                            'Error ⚠️ - this address is already linked to another account\n'
+                            'Check that the entered address is correct or contact support',
                             reply_markup=reply_markup
                         )
                     await message.reply_text(
-                        'Пожалуйста, введите ваш адрес TRON снова.',
+                        'Please enter your TRON address again.',
                         reply_markup=ForceReply(selective=True)
                     )
                 else:
@@ -597,7 +649,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     conn.commit()
 
                     await message.reply_text(
-                        f"Адрес добавлен успешно, ваш адрес - {text}, Оставшаяся энергия: {energy_remaining}, Свободное количество Bandwidth: {free_bandwidth}"
+                        f"The address was added successfully, your address - {text}, Remaining energy: {energy_remaining}, Free Bandwidth Amount: {free_bandwidth}"
                     )
 
                     # Создаем задачи для асинхронного выполнения
@@ -608,18 +660,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         # Ждем выполнения обеих задач
                         await asyncio.gather(energy_task, band_task)
                         await message.reply_text(
-                            "Автоматическое пополнение энергии и bandwidth выполнено успешно."
+                            "Automatic replenishment of energy and bandwidth has been completed successfully."
                         )
                     except Exception as e:
                         await message.reply_text(
-                            f"Произошла ошибка при автоматическом пополнении: {str(e)}"
+                            f"An error occurred during automatic replenishment: {str(e)}"
                         )
             else:
-                await message.reply_text('Вы не зарегистрированы. Пожалуйста, используйте команду /start для регистрации.')
+                await message.reply_text('You are not registered. Please use the /start command to register.')
             conn.close()
         
         # Обрабатываем удаление адреса TRON
-        elif 'адрес TRON, который вы хотите удалить' in reply_text:
+        elif 'the TRON address that you want to delete' in reply_text:
             tron_address = text
             conn = sqlite3.connect('users.db')
             cursor = conn.cursor()
@@ -632,13 +684,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 if address_data:
                     cursor.execute('DELETE FROM user_addresses WHERE tron_address = ? AND user_id = ?', (tron_address, user_id))
                     conn.commit()
-                    await message.reply_text(f'Кошелек {tron_address} был успешно удален.')
+                    await message.reply_text(f'The {tron_address} wallet has been successfully deleted.')
                 else:
-                    await message.reply_text('Ошибка: кошелек с таким адресом не найден!')
+                    await message.reply_text('Error: the wallet with this address was not found!')
             conn.close()
         
         # Обрабатываем запрос на добавление пользователя
-        elif 'ID пользователя, которого хотите добавить' in reply_text:
+        elif 'The ID of the user you want to add' in reply_text:
             await add_user(update, context)
         return
 
@@ -769,9 +821,9 @@ def get_transaction_count(address, start_timestamp, end_timestamp):
         if transaction_count_element:
             return transaction_count_element.text.strip()
         else:
-            return "Количество транзакций не найдено"
+            return "The number of transactions was not found"
     except Exception as e:
-        return f"Ошибка: {str(e)}"
+        return f"Mistake: {str(e)}"
     finally:
         driver.quit()
 
@@ -794,15 +846,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if approved_index is not None and len(user_data) > approved_index:
             if user_data[approved_index] == 1:
                 await update.message.reply_text(
-                    'Вы уже зарегистрированы и одобрены!\nВсе команды - /help'
+                    'You are already registered and approved!\nAll commands are /help'
                 )
             else:
                 await update.message.reply_text(
-                    'Ваша заявка на регистрацию находится на рассмотрении. Пожалуйста, ожидайте одобрения администратора.'
+                    'Your application for registration is under consideration by the administrator. Please wait for approval. If you have received an invitation, you can speed up the registration process by clicking on the referral link.'
                 )
         else:
             await update.message.reply_text(
-                'Ваша заявка на регистрацию находится на рассмотрении. Пожалуйста, ожидайте одобрения администратора.'
+                'Your registration application is under consideration by the administrator. Please wait for approval. If you have received an invitation, you can speed up the registration process by clicking on the referral link.'
             )
     else:
         cursor.execute('INSERT INTO users (chat_id, approved) VALUES (?, 0)', (chat_id,))
@@ -812,18 +864,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         admin_chat_id = get_admin_chat_id()
         if admin_chat_id:
             keyboard = [
-                [InlineKeyboardButton("Разрешить", callback_data=f'approve_{chat_id}'),
-                 InlineKeyboardButton("Отклонить", callback_data=f'reject_{chat_id}')]
+                [InlineKeyboardButton("Allow", callback_data=f'approve_{chat_id}'),
+                 InlineKeyboardButton("Reject", callback_data=f'reject_{chat_id}')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await context.bot.send_message(
                 chat_id=admin_chat_id,
-                text=f"Пользователь: @{user.username} хочет воспользоваться ботом. Разрешить?",
+                text=f"User: @{user.username} he wants to use a bot. Allow it?",
                 reply_markup=reply_markup
             )
         
         await update.message.reply_text(
-            'Ваша заявка на регистрацию отправлена. Пожалуйста, ожидайте одобрения администратора.'
+            'Your registration request has been sent. Please wait for the administrators approval.'
         )
     conn.close()
 
@@ -859,13 +911,13 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             await update.message.reply_text(
-                'Ошибка ⚠️ - такой адрес уже привязан к другому аккаунту\n'
-                'Проверьте правильность введенного адреса или обратитесь в поддержку',
+                'Error ⚠️ - this address is already linked to another account\n'
+                'Check that the entered address is correct or contact support',
                 reply_markup=reply_markup
             )
 
             await update.message.reply_text(
-                'Пожалуйста, введите ваш адрес TRON снова.',
+                'Please enter your TRON address again.',
                 reply_markup=ForceReply(selective=True)
             )
         else:
@@ -878,7 +930,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             conn.commit()
 
             await update.message.reply_text(
-                f"Адрес добавлен успешно, ваш адрес - {tron_address}, Оставшаяся энергия: {energy_remaining}, Свободное количество Bandwidth: {free_bandwidth}"
+                f"The address was added successfully, your address - {tron_address}, Remaining energy: {energy_remaining}, Free Bandwidth Amount: {free_bandwidth}"
             )
 
             # Вызываем функции автоматического пополнения энергии и bandwidth
@@ -886,15 +938,15 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 await auto_energy_reg(update, tron_address)
                 await auto_band_reg(update, tron_address)
                 await update.message.reply_text(
-                    "Автоматическое пополнение энергии и bandwidth выполнено успешно."
+                    "Automatic replenishment of energy and bandwidth has been completed successfully."
                 )
             except Exception as e:
                 await update.message.reply_text(
-                    f"Произошла ошибка при автоматическом пополнении: {str(e)}"
+                    f"An error occurred during automatic replenishment: {str(e)}"
                 )
 
     else:
-        await update.message.reply_text('Вы не зарегистрированы. Пожалуйста, используйте команду /start для регистрации.')
+        await update.message.reply_text('You are not registered. Please use the /start command to register.')
 
     conn.close()
 
@@ -913,50 +965,50 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         transaction_cost = USDT_PER_TRANSACTION * int(transaction_count)
         
         response_message = (
-            f"Данные для адреса {address}:\n"
-            f"Использовано энергии: {energy_used}\n"
-            f"Лимит энергии: {energy_limit}\n"
-            f"Оставшаяся энергия: {energy_remaining}\n"
-            f"Свободное количество Bandwidth: {free_bandwidth}\n"
-            f"Количество транзакций за текущий месяц: {transaction_count}\n"
-            f"Сумма транзакций: {transaction_cost:.2f} USDT"
+            f"Address information {address}:\n"
+            f"Energy used: {energy_used}\n"
+            f"Energy limit: {energy_limit}\n"
+            f"Remaining energy: {energy_remaining}\n"
+            f"Free Bandwidth Amount: {free_bandwidth}\n"
+            f"The number of transactions for the current month: {transaction_count}\n"
+            f"Transaction amount: {transaction_cost:.2f} USDT"
         )
         await update.message.reply_text(response_message)
     else:
-        await update.message.reply_text('Пожалуйста, укажите адрес после команды /stats.')
+        await update.message.reply_text('Please enter the address after the /stats command.')
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     help_text = (
-        "Доступные команды:\n"
-        "/start - Начать регистрацию\n"
-        "/stats <адрес> - Получить статистику для указанного адреса TRON\n"
-        "/profile - Показать профиль пользователя\n"
-        "/ahelp - Показать команды админа\n"
-        "/help - Показать это сообщение"
+        "Available commands:\n"
+        "/start - Start registration\n"
+        "/stats <address> - Get statistics for the specified TRON address\n"
+        "/profile - Show user profile\n"
+        "/ahelp - Show admin commands\n"
+        "/help - Show this message"
     )
     await update.message.reply_text(help_text)
 
 async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.message.chat_id
     if not is_admin(chat_id):
-        await update.message.reply_text("У вас нет прав для доступа к этой команде.")
+        await update.message.reply_text("You do not have permission to access this command.")
         return
     else:
         help_text = (
-            "Доступные команды:\n"
-            "/apanel - просмотреть статистику пользователей\n"
-            "/order <адрес> <количество> <срок в днях> - Отправить заказ\n"
-            "/band <адрес> <количество> <срок в днях> - Арендовать Bandwidth для указанного адреса\n"
-            "/aduser <user_id> <tron_address> - Добавить нового пользователя вручную\n"
-            "/data - Поулчить статистику тразакций пользовтаелей в таблице exel\n"
-            "/ahelp - Показать это сообщение"
+            "Available commands:\n"
+            "/apanel - view user statistics\n"
+            "/order <address> <quantity> <time in days> - Send the order\n"
+            "/band <address> <quantity> <period in days> - Rent Bandwidth for the specified address\n"
+            "/aduser <user_id> <tron_address> - Add a new user manually\n"
+            "/data - To improve the statistics of user transactions in the exel table\n"
+            "/ahelp - Show this message"
         )
         await update.message.reply_text(help_text)
 
 async def order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     if len(context.args) != 3:
-        await update.message.reply_text('Пожалуйста, используйте формат: /order <адрес> <количество> <срок в днях>')
+        await update.message.reply_text('Please use the format: /order <address> <quantity> <period in days>')
         return
     
     address, quantity, duration = context.args
@@ -968,13 +1020,13 @@ async def order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
     await update.message.reply_text(
-        f"Количество бесплатных транзакций пополнено на +1!\n"
-        f"Скоро USDT будут в вашем кошельке {address}!"
+        f"The number of free transactions has been replenished by +1!\n"
+        f"Soon USDT will be in your wallet {address}!"
     )
 
 async def band(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if len(context.args) != 3:
-        await update.message.reply_text('Пожалуйста, используйте формат: /band <адрес> <количество> <срок в днях>')
+        await update.message.reply_text('Please use the format: /band <address> <quantity> <period in days>')
         return
     
     address, amount_band, duration = context.args
@@ -1206,49 +1258,69 @@ async def band(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         time.sleep(1)
 
         await update.message.reply_text(
-                f"Вы успешно арендовали {amount_band} Bandwidth для адреса {address} на срок {duration} дней."
+                f"You have successfully rented the {amount_band} Bandwidth for the {address} address for a period of {duration} days."
             )
     except Exception as e:
             await update.message.reply_text(
-                f"Произошла ошибка при аренде Bandwidth: {str(e)}"
+                f"An error occurred when renting Bandwidth: {str(e)}"
             )
     finally:
         driver.quit()
 
-# Function to show the user's profile
 async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     chat_id = user.id
 
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT id FROM users WHERE chat_id = ?', (chat_id,))
-    user_id = cursor.fetchone()
+    
+    # Получаем user_id и ref_url для текущего пользователя
+    cursor.execute('SELECT id, ref_url FROM users WHERE chat_id = ?', (chat_id,))
+    user_data = cursor.fetchone()
 
-    if user_id:
-        user_id = user_id[0]
+    if user_data:
+        user_id, ref_url = user_data
+        
+        # Экранирование реферальной ссылки (HTML)
+        ref_url_escaped = ref_url.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').replace("'", '&#39;')
+        
+        # Получаем адреса пользователя
         cursor.execute('SELECT tron_address, energy_remaining, free_bandwidth FROM user_addresses WHERE user_id = ?', (user_id,))
         addresses = cursor.fetchall()
 
+        profile_text = "Your profile:\n"
         if addresses:
-            profile_text = "Ваш профиль:\n"
             for address in addresses:
                 tron_address, energy_remaining, free_bandwidth = address
                 profile_text += (
-                    f"Адрес TRON: {tron_address}\n"
-                    f"Оставшаяся энергия: {energy_remaining}\n"
-                    f"Свободное количество Bandwidth: {free_bandwidth}\n\n"
+                    f"TRON Address: {tron_address}\n"
+                    f"Remaining energy: {energy_remaining}\n"
+                    f"Free Bandwidth Amount: {free_bandwidth}\n\n"
                 )
+            
+            # Добавляем гиперссылку в формате HTML
+            profile_text += f"Your referral link: <a href=\"{ref_url_escaped}\">➡️Click ME⬅️</a>\n"
+
+            # Создаем клавиатуру
             keyboard = [
-                [InlineKeyboardButton("Добавить кошелек", callback_data='add_wallet')],
-                [InlineKeyboardButton("Удалить кошелек", callback_data='delete_wallet')]
+                [InlineKeyboardButton("Add a wallet", callback_data='add_wallet')],
+                [InlineKeyboardButton("Delete a wallet", callback_data='delete_wallet')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(profile_text, reply_markup=reply_markup)
+            await update.message.reply_text(profile_text, reply_markup=reply_markup, parse_mode='HTML')
         else:
-            await update.message.reply_text('У вас нет добавленных адресов. Пожалуйста, используйте команду /start для добавления адреса.')
+            profile_text += 'You dont have any addresses added.\n'
+            # Добавляем гиперссылку в формате HTML даже если нет адресов
+            profile_text += f"Your referral link: <a href=\"{ref_url_escaped}\">➡️Click ME⬅️</a>\n"
+            keyboard = [
+                [InlineKeyboardButton("Add a wallet", callback_data='add_wallet')],
+                [InlineKeyboardButton("Delete a wallet", callback_data='delete_wallet')]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(profile_text, reply_markup=reply_markup, parse_mode='HTML')
     else:
-        await update.message.reply_text('Вы не зарегистрированы. Пожалуйста, используйте команду /start для регистрации.')
+        await update.message.reply_text('You are not registered. Please use the /start command to register.')
+    
     conn.close()
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1256,7 +1328,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await query.answer()
 
     if query.data == 'add_wallet':
-        await query.message.reply_text('Пожалуйста, введите новый адрес TRON.', reply_markup=ForceReply(selective=True))
+        await query.message.reply_text('Please enter a new TRON address.', reply_markup=ForceReply(selective=True))
 
 # --------------------------------------------------------------------------------------------------------------------------
 # exel function
@@ -1264,10 +1336,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def data_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.message.chat_id
     if not is_admin(chat_id):
-        await update.message.reply_text("У вас нет прав для доступа к этой команде.")
+        await update.message.reply_text("You don't have the rights to access this command.")
         return
     else:
-        await update.message.reply_text("Ожидайте, идет обработка данных кошельков")
+        await update.message.reply_text("Expect that wallet data is being processed")
         
     addresses = fetch_tron_addresses()
     all_data = []
@@ -1281,9 +1353,9 @@ async def data_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 df = pd.read_excel(filename)
                 all_data.append(df)
             except Exception as e:
-                await update.message.reply_text(f"Ошибка при отправке файла {filename}: {str(e)}")
+                await update.message.reply_text(f"Error sending the file {filename}: {str(e)}")
         else:
-            await update.message.reply_text(f"Файл {filename} не был создан")
+            await update.message.reply_text(f"The {filename} file was not created")
     
     if all_data:
         combined_df = pd.concat(all_data, ignore_index=True)
@@ -1292,7 +1364,7 @@ async def data_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         try:
             await context.bot.send_document(chat_id, document=open(combined_filename, 'rb'))
         except Exception as e:
-            await update.message.reply_text(f"Ошибка при отправке общего файла {combined_filename}: {str(e)}")
+            await update.message.reply_text(f"Error when sending a shared file {combined_filename}: {str(e)}")
 
 def fetch_tron_addresses():
     conn = sqlite3.connect('users.db')
@@ -1509,6 +1581,7 @@ def main():
     application.add_handler(CommandHandler("apanel", admin_panel))
     application.add_handler(CommandHandler("aduser", add_user))
     application.add_handler(CommandHandler("data", data_command))
+    application.add_handler(CommandHandler('ref', ref_command))
     application.add_handler(CallbackQueryHandler(button_handler1, pattern='approve_|reject_'))
     application.add_handler(CallbackQueryHandler(button_handler2, pattern='add_wallet|delete_wallet|user_'))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
