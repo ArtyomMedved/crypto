@@ -106,16 +106,20 @@ def calculate_transaction_cost(energy_used, bandwidth_used, bandwidth_cost_per_b
     
     return total_transaction_cost
 
-def update_excel(transactions_data, filename="test.xlsx"):
+def update_excel(transactions_data, filename="test.xlsx", sheet_name="Sheet1"):
     file_exists = os.path.exists(filename)
-    print(f"File exists: {file_exists}")
     
+    # Read existing data if file exists
     if file_exists:
-        df = pd.read_excel(filename)
+        with pd.ExcelFile(filename) as xls:
+            if sheet_name in xls.sheet_names:
+                df = pd.read_excel(xls, sheet_name=sheet_name)
+            else:
+                df = pd.DataFrame(columns=["Txn Hash", "Amount (USDT)", "Recipient", "Timestamp", "Energy Used", "Bandwidth Used", "TRX Consumed", "Total Transaction Cost"])
     else:
         df = pd.DataFrame(columns=["Txn Hash", "Amount (USDT)", "Recipient", "Timestamp", "Energy Used", "Bandwidth Used", "TRX Consumed", "Total Transaction Cost"])
     
-    existing_hashes = set(df["Txn Hash"])
+    existing_hashes = set(df["Txn Hash"]) if not df.empty else set()
     
     new_data = []
     for tx_hash, energy, bandwidth, timestamp, recipient, amount, trx_consumed in transactions_data:
@@ -125,7 +129,7 @@ def update_excel(transactions_data, filename="test.xlsx"):
     
     if new_data:
         new_df = pd.DataFrame(new_data, columns=["Txn Hash", "Amount (USDT)", "Recipient", "Timestamp", "Energy Used", "Bandwidth Used", "TRX Consumed", "Total Transaction Cost"])
-        df = pd.concat([df, new_df], ignore_index=True)
+        df = pd.concat([df, new_df], ignore_index=True, sort=False)  # Avoid future warnings
         
         # Calculate totals
         total_energy = df["Energy Used"].sum()
@@ -135,32 +139,41 @@ def update_excel(transactions_data, filename="test.xlsx"):
         
         # Append totals to the DataFrame
         totals_df = pd.DataFrame([["Total", None, None, None, total_energy, total_bandwidth, total_trx_consumed, total_cost]], columns=["Txn Hash", "Amount (USDT)", "Recipient", "Timestamp", "Energy Used", "Bandwidth Used", "TRX Consumed", "Total Transaction Cost"])
-        df = pd.concat([df, totals_df], ignore_index=True)
+        df = pd.concat([df, totals_df], ignore_index=True, sort=False)  # Avoid future warnings
         
-        df.to_excel(filename, index=False)
-        print(f"Excel file updated and saved as {filename}")
+        # Save to Excel
+        with pd.ExcelWriter(filename, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+        print(f"Excel file updated and saved as {filename}, sheet: {sheet_name}")
     else:
         print("No new transactions to update.")
 
-def main(address):
+def main(addresses):
     start_date, end_date = get_start_and_end_of_month()
     print(f"Fetching transactions from {start_date} to {end_date}.")
     
-    transactions = get_transactions(address, start_date, end_date)
-    print(f"Fetched {len(transactions)} transactions.")
-    
-    usdt_transactions = filter_usdt_transactions(transactions)
-    print(f"Filtered to {len(usdt_transactions)} USDT transactions.")
-    
-    transactions_data = []
-    for tx_hash in usdt_transactions:
-        details = get_transaction_details(tx_hash)
-        if details is not None:
-            energy, bandwidth, timestamp, recipient, amount, trx_consumed = details
-            transactions_data.append((tx_hash, energy, bandwidth, timestamp, recipient, amount, trx_consumed))
-    
-    print(f"Updating Excel with {len(transactions_data)} transactions.")
-    update_excel(transactions_data)
+    for address in addresses:
+        print(f"Processing address: {address}")
+        
+        transactions = get_transactions(address, start_date, end_date)
+        print(f"Fetched {len(transactions)} transactions for address {address}.")
+        
+        usdt_transactions = filter_usdt_transactions(transactions)
+        print(f"Filtered to {len(usdt_transactions)} USDT transactions for address {address}.")
+        
+        transactions_data = []
+        for tx_hash in usdt_transactions:
+            details = get_transaction_details(tx_hash)
+            if details is not None:
+                energy, bandwidth, timestamp, recipient, amount, trx_consumed = details
+                transactions_data.append((tx_hash, energy, bandwidth, timestamp, recipient, amount, trx_consumed))
+        
+        print(f"Updating Excel with {len(transactions_data)} transactions for address {address}.")
+        sheet_name = address[:31]  # Sheet names should be within 31 characters
+        update_excel(transactions_data, sheet_name=sheet_name)
 
-address = "TJ1mLooPG7AgQFNKqbh2TF4hmKtZVgNTyb"
-main(address)
+addresses = [
+    "TGfWsfVxVK4PMDo3w6rmQwATdF7pVE5wwK",
+    "TJ1mLooPG7AgQFNKqbh2TF4hmKtZVgNTyb"
+]
+main(addresses)
